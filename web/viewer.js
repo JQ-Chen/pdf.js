@@ -1105,6 +1105,7 @@ var TextLayerBuilder = function textLayerBuilder(textLayerDiv) {
 };
 
 window.addEventListener('load', function webViewerLoad(evt) {
+/*
   var params = PDFView.parseQueryString(document.location.search.substring(1));
 
   var file = PDFJS.isFirefoxExtension ?
@@ -1119,6 +1120,7 @@ window.addEventListener('load', function webViewerLoad(evt) {
   } else {
     document.getElementById('fileInput').value = null;
   }
+*/
 
   // Special debugging flags in the hash section of the URL.
   var hash = document.location.hash.substring(1);
