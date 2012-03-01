@@ -502,6 +502,9 @@ var PDFView = {
       // Setting the default one.
       this.parseScale(kDefaultScale, true);
     }
+
+    // Need to do this explicitly because our sidebar does not start out hidden
+    updateThumbViewArea();
   },
 
   setHash: function pdfViewSetHash(hash) {
