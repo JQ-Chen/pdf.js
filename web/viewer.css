@@ -130,7 +130,7 @@ body.nosidebar #sidebar {
 #sidebarScrollView {
   position: absolute;
   overflow: hidden;
-  overflow-y: auto;
+  overflow-y: scroll;
   top: 0;
   bottom: 0;
   left: 0;
