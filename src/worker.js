@@ -137,9 +137,6 @@ var WorkerMessageHandler = {
         return;
       }
 
-      console.log('page=%d - getIRQueue: time=%dms, len=%d', pageNum,
-                                  Date.now() - start, IRQueue.fnArray.length);
-
       // Filter the dependecies for fonts.
       var fonts = {};
       for (var i = 0, ii = dependency.length; i < ii; i++) {
