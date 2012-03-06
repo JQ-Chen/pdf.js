@@ -154,7 +154,7 @@ body.nosidebar #sidebar {
 }
 
 .thumbnail:not([data-loaded]) {
-  background-color: gray;
+  background-color: rgb(100, 102, 104);
 }
 
 .thumbnail > canvas {
