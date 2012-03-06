@@ -493,11 +493,18 @@ var PDFView = {
       this.page = 1;
     }
 
+    // Don't let us be past the end of the document--bad things happen
+    if (this.page > this.pages.length)
+      this.page = this.pages.length;
+
     if (PDFView.currentScale === kUnknownScale) {
       // Scale was not initialized: invalid bookmark or scale was not specified.
       // Setting the default one.
       this.parseScale(kDefaultScale, true);
     }
+
+    // Need to do this explicitly because our sidebar does not start out hidden
+    updateThumbViewArea();
   },
 
   setHash: function pdfViewSetHash(hash) {
@@ -1110,6 +1117,7 @@ var TextLayerBuilder = function textLayerBuilder(textLayerDiv) {
 };
 
 window.addEventListener('load', function webViewerLoad(evt) {
+/*
   var params = PDFView.parseQueryString(document.location.search.substring(1));
 
   var file = PDFJS.isFirefoxExtension ?
@@ -1124,6 +1132,7 @@ window.addEventListener('load', function webViewerLoad(evt) {
   } else {
     document.getElementById('fileInput').value = null;
   }
+*/
 
   // Special debugging flags in the hash section of the URL.
   var hash = document.location.hash.substring(1);
