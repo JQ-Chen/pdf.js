@@ -153,6 +153,12 @@ body.nosidebar #sidebar {
   overflow: hidden;
 }
 
+.thumbnail[data-loaded] {
+  box-shadow: 0px 2px 4px #333;
+  -moz-box-shadow: 0px 2px 4px #333;
+  -webkit-box-shadow: 0px 2px 4px #333;
+}
+
 .thumbnail:not([data-loaded]) {
   background-color: rgb(100, 102, 104);
 }
