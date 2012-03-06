@@ -143,6 +143,10 @@ span#info {
   width: 280px;
 }
 
+#sidebarScrollView a {
+  text-decoration: none;
+}
+
 .thumbnail {
   width: 134px;
   height: 134px;
@@ -162,6 +166,15 @@ span#info {
 .thumbnail > canvas {
   vertical-align: middle;
   display: inline-block;
+}
+
+.thumbnailLabel {
+  font-size: 10px;
+  font-weight: bold;
+  text-align: center;
+  color: white;
+  margin-bottom: 12px;
+  text-shadow: 1px 1px 1px #000;
 }
 
 #outlineScrollView {
