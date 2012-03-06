@@ -933,8 +933,12 @@ var ThumbnailView = function thumbnailView(container, page, id, pageRatio) {
   div.className = 'thumbnail';
 
   var labelDiv = document.createElement('div');
-  labelDiv.className = 'thumbnailLabel';
-  labelDiv.innerHTML = id;
+  labelDiv.id = 'thumbnailLabel' + id;
+  labelDiv.className = 'thumbnailLabelContainer';
+  var labelSpan = document.createElement('span');
+  labelSpan.innerHTML = id;
+  labelSpan.className = 'thumbnailLabel';
+  labelDiv.appendChild(labelSpan);
 
   anchor.appendChild(div);
   anchor.appendChild(labelDiv);
