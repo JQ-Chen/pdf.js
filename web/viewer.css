@@ -331,13 +331,6 @@ canvas {
   padding: 8px 0px;
 }
 
-#sidebarView canvas:hover {
-  background: #ff0;
-  box-shadow: 0px 2px 10px #ff0;
-  -moz-box-shadow: 0px 2px 10px #ff0;
-  -webkit-box-shadow: 0px 2px 10px #ff0;
-}
-
 #pageWidthOption {
   border-top: 1px solid black;
 }
