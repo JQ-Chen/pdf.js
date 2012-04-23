@@ -79,20 +79,49 @@ MessageHandler.prototype = {
 
 var WorkerMessageHandler = {
   setup: function wphSetup(handler) {
-    var pdfDoc = null;
+    var pdfModel = null;
 
     handler.on('test', function wphSetupTest(data) {
       handler.send('test', data instanceof Uint8Array);
     });
 
-    handler.on('doc', function wphSetupDoc(data) {
+    handler.on('GetDocRequest', function wphSetupDoc(data) {
       // Create only the model of the PDFDoc, which is enough for
       // processing the content of the pdf.
-      pdfDoc = new PDFDocModel(new Stream(data));
+      pdfModel = new PDFDocument(new Stream(data));
+      var doc = {
+        numPages: pdfModel.numPages,
+        fingerprint: pdfModel.getFingerprint(),
+        destinations: pdfModel.catalog.destinations,
+        outline: pdfModel.catalog.documentOutline,
+        info: pdfModel.getDocumentInfo(),
+        metadata: pdfModel.catalog.metadata
+      };
+      handler.send('GetDoc', {pdfInfo: doc});
     });
 
-    handler.on('page_request', function wphSetupPageRequest(pageNum) {
-      pageNum = parseInt(pageNum);
+    handler.on('GetPageRequest', function wphSetupGetPage(data) {
+      var pageNumber = data.pageIndex + 1;
+      var pdfPage = pdfModel.getPage(pageNumber);
+      var page = {
+        pageIndex: data.pageIndex,
+        rotate: pdfPage.rotate,
+        ref: pdfPage.ref,
+        view: pdfPage.view
+      };
+      handler.send('GetPage', {pageInfo: page});
+    });
+
+    handler.on('GetAnnotationsRequest', function wphSetupGetAnnotations(data) {
+      var pdfPage = pdfModel.getPage(data.pageIndex + 1);
+      handler.send('GetAnnotations', {
+        pageIndex: data.pageIndex,
+        annotations: pdfPage.getAnnotations()
+      });
+    });
+
+    handler.on('RenderPageRequest', function wphSetupRenderPage(data) {
+      var pageNum = data.pageIndex + 1;
 
 
       // The following code does quite the same as
@@ -103,14 +132,14 @@ var WorkerMessageHandler = {
       var start = Date.now();
 
       var dependency = [];
-      var IRQueue = null;
+      var operatorList = null;
       try {
-        var page = pdfDoc.getPage(pageNum);
+        var page = pdfModel.getPage(pageNum);
         // Pre compile the pdf page and fetch the fonts/images.
-        IRQueue = page.getIRQueue(handler, dependency);
+        operatorList = page.getOperatorList(handler, dependency);
       } catch (e) {
         var minimumStackMessage =
-            'worker.js: while trying to getPage() and getIRQueue()';
+            'worker.js: while trying to getPage() and getOperatorList()';
 
         // Turn the error into an obj that can be serialized
         if (typeof e === 'string') {
@@ -130,7 +159,7 @@ var WorkerMessageHandler = {
           };
         }
 
-        handler.send('page_error', {
+        handler.send('PageError', {
           pageNum: pageNum,
           error: e
         });
@@ -145,62 +174,12 @@ var WorkerMessageHandler = {
           fonts[dep] = true;
         }
       }
-
-      handler.send('page', {
-        pageNum: pageNum,
-        IRQueue: IRQueue,
+      handler.send('RenderPage', {
+        pageIndex: data.pageIndex,
+        operatorList: operatorList,
         depFonts: Object.keys(fonts)
       });
     }, this);
-
-    handler.on('font', function wphSetupFont(data) {
-      var objId = data[0];
-      var name = data[1];
-      var file = data[2];
-      var properties = data[3];
-
-      var font = {
-        name: name,
-        file: file,
-        properties: properties
-      };
-
-      // Some fonts don't have a file, e.g. the build in ones like Arial.
-      if (file) {
-        var fontFileDict = new Dict();
-        fontFileDict.map = file.dict.map;
-
-        var fontFile = new Stream(file.bytes, file.start,
-                                  file.end - file.start, fontFileDict);
-
-        // Check if this is a FlateStream. Otherwise just use the created
-        // Stream one. This makes complex_ttf_font.pdf work.
-        var cmf = file.bytes[0];
-        if ((cmf & 0x0f) == 0x08) {
-          font.file = new FlateStream(fontFile);
-        } else {
-          font.file = fontFile;
-        }
-      }
-
-      var obj = new Font(font.name, font.file, font.properties);
-
-      var str = '';
-      var objData = obj.data;
-      if (objData) {
-        var length = objData.length;
-        for (var j = 0; j < length; ++j)
-          str += String.fromCharCode(objData[j]);
-      }
-
-      obj.str = str;
-
-      // Remove the data array form the font object, as it's not needed
-      // anymore as we sent over the ready str.
-      delete obj.data;
-
-      handler.send('font_ready', [objId, obj]);
-    });
   }
 };
 

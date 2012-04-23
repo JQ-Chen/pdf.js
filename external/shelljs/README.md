@@ -1,8 +1,11 @@
 # ShellJS - Unix shell commands for Node.js [![Build Status](https://secure.travis-ci.org/arturadib/shelljs.png)](http://travis-ci.org/arturadib/shelljs)
 
++ _This project is young and experimental. Use at your own risk._
++ _Major API change as of v0.0.4: `ls()` and `find()` now return arrays._
+
 ShellJS is a **portable** (Windows included) implementation of Unix shell commands on top of the Node.js API. You can use it to eliminate your shell script's dependency on Unix while still keeping its familiar and powerful commands.
 
-The project is both [unit-tested](http://travis-ci.org/arturadib/shelljs) and battle-tested at Mozilla's [pdf.js](http://github.com/mozilla/pdf.js).
+The project is [unit-tested](http://travis-ci.org/arturadib/shelljs) and is being used at Mozilla's [pdf.js](http://github.com/mozilla/pdf.js).
 
 
 ### Example
@@ -12,15 +15,15 @@ require('shelljs/global');
 
 // Copy files to release dir
 mkdir('-p', 'out/Release');
-cp('-R', 'lib/*.js', 'out/Release');
+cp('-R', 'stuff/*', 'out/Release');
 
 // Replace macros in each .js file
 cd('lib');
-for (file in ls('*.js')) {
+ls('*.js').forEach(function(file) {
   sed('-i', 'BUILD_VERSION', 'v0.1.2', file);
   sed('-i', /.*REMOVE_THIS_LINE.*\n/, '', file);
   sed('-i', /.*REPLACE_LINE_WITH_MACRO.*\n/, cat('macro.js'), file);
-}
+});
 cd('..');
 
 // Run external tool synchronously
@@ -71,11 +74,11 @@ target.docs = function() {
   cd(__dirname);
   mkdir('docs');
   cd('lib');
-  for (file in ls('*.js')) {
+  ls('*.js').forEach(function(file){
     var text = grep('//@', file); // extract special comments
     text.replace('//@', ''); // remove comment tags
     text.to('docs/my_docs.md');
-  }
+  });
 }
 ```
 
@@ -126,9 +129,22 @@ ls('-R', '/users/me', '/tmp');
 ls('-R', ['/users/me', '/tmp']); // same as above
 ```
 
-Returns list of files in the given path, or in current directory if no path provided.
-For convenient iteration via `for (file in ls())`, the format returned is a hash object:
-`{ 'file1':null, 'dir1/file2':null, ...}`.
+Returns array of files in the given path, or in current directory if no path provided.
+
+#### find(path [,path ...])
+#### find(path_array)
+Examples:
+
+```javascript
+find('src', 'lib');
+find(['src', 'lib']); // same as above
+find('.').filter(function(file) { return file.match(/\.js$/); });
+```
+
+Returns array of all files (however deep) in the given paths.
+
+The main difference from `ls('-R', path)` is that the resulting file names 
+include the base directories, e.g. `lib/resources/file1` instead of just `file1`.
 
 #### cp('[options ,] source [,source ...], dest')
 #### cp('[options ,] source_array, dest')
@@ -194,6 +210,21 @@ mkdir('-p', ['/tmp/a/b/c/d', '/tmp/e/f/g']); // same as above
 ```
 
 Creates directories.
+
+#### test(expression)
+Available expression primaries:
+
++ `'-d', 'path'`: true if path is a directory
++ `'-f', 'path'`: true if path is a regular file
+
+Examples:
+
+```javascript
+if (test('-d', path)) { /* do something with dir */ };
+if (!test('-f', path)) continue; // skip if it's a regular file
+```
+
+Evaluates expression using the available primaries and returns corresponding value.
 
 #### cat(file [, file ...])
 #### cat(file_array)
@@ -294,6 +325,10 @@ When in synchronous mode returns the object `{ code:..., output:... }`, containi
 `output` (stdout + stderr)  and its exit `code`. Otherwise the `callback` gets the 
 arguments `(code, output)`.
 
+**Note:** For long-lived processes, it's best to run `exec()` asynchronously as
+the current synchronous implementation uses a lot of CPU. This should be getting
+fixed soon.
+
 ## Non-Unix commands
 
 
@@ -301,16 +336,35 @@ arguments `(code, output)`.
 Searches and returns string containing a writeable, platform-dependent temporary directory.
 Follows Python's [tempfile algorithm](http://docs.python.org/library/tempfile.html#tempfile.tempdir).
 
-#### exists(path [, path ...])
-#### exists(path_array)
-Returns true if all the given paths exist.
-
 #### error()
 Tests if error occurred in the last command. Returns `null` if no error occurred,
 otherwise returns string explaining the error
 
-#### verbose()
-Enables all output (default)
+#### silent([state])
+Example:
 
-#### silent()
-Suppresses all output, except for explict `echo()` calls
+```javascript
+var silentState = silent();
+silent(true);
+/* ... */
+silent(silentState); // restore old silent state
+```
+
+Suppresses all command output if `state = true`, except for `echo()` calls. 
+Returns state if no arguments given.
+
+## Deprecated
+
+
+#### exists(path [, path ...])
+#### exists(path_array)
+
+_This function is being deprecated. Use `test()` instead._
+
+Returns true if all the given paths exist.
+
+#### verbose()
+
+_This function is being deprecated. Use `silent(false) instead.`_
+
+Enables all output (default)

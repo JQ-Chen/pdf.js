@@ -79,6 +79,7 @@ target.bundle = function() {
   var SRC_FILES =
        ['core.js',
         'util.js',
+        'api.js',
         'canvas.js',
         'obj.js',
         'function.js',
@@ -97,9 +98,10 @@ target.bundle = function() {
         'worker.js',
         '../external/jpgjs/jpg.js',
         'jpx.js',
-        'bidi.js'];
+        'bidi.js',
+        'metadata.js'];
 
-  if (!exists(BUILD_DIR))
+  if (!test('-d', BUILD_DIR))
     mkdir(BUILD_DIR);
 
   cd('src');
@@ -142,14 +144,14 @@ target.pagesrepo = function() {
   echo();
   echo('### Creating fresh clone of gh-pages');
 
-  if (!exists(BUILD_DIR))
+  if (!test('-d', BUILD_DIR))
     mkdir(BUILD_DIR);
 
-  if (!exists(GH_PAGES_DIR)) {
+  if (!test('-d', GH_PAGES_DIR)) {
     echo();
     echo('Cloning project repo...');
     echo('(This operation can take a while, depending on network conditions)');
-    exec('git clone -b gh-pages --depth=1 ' + REPO + ' ' + ßGH_PAGES_DIR,
+    exec('git clone -b gh-pages --depth=1 ' + REPO + ' ' + GH_PAGES_DIR,
       {silent: true});
     echo('Done.');
   }
@@ -168,13 +170,16 @@ target.pagesrepo = function() {
 //
 
 var EXTENSION_WEB_FILES =
-      ['web/images',
+      ['web/debugger.js',
+       'web/images',
        'web/viewer.css',
        'web/viewer.js',
        'web/viewer.html',
        'web/viewer-production.html'],
-    EXTENSION_BASE_VERSION = '4bb289ec499013de66eb421737a4dbb4a9273eda',
-    EXTENSION_BUILD_NUMBER;
+    EXTENSION_BASE_VERSION = 'f0f0418a9c6637981fe1182b9212c2d592774c7d',
+    EXTENSION_VERSION_PREFIX = '0.3.',
+    EXTENSION_BUILD_NUMBER,
+    EXTENSION_VERSION;
 
 //
 // make extension
@@ -200,6 +205,8 @@ target.buildnumber = function() {
     .output.match(/\n/g).length; // get # of lines in git output
 
   echo('Extension build number: ' + EXTENSION_BUILD_NUMBER);
+
+  EXTENSION_VERSION = EXTENSION_VERSION_PREFIX + EXTENSION_BUILD_NUMBER;
 };
 
 //
@@ -215,13 +222,26 @@ target.firefox = function() {
       FIREFOX_EXTENSION_FILES_TO_COPY =
         ['*.js',
          '*.rdf',
-         'components'];
-      FIREFOX_EXTENSION_FILES =
-        ['content',
-         '*.js',
-         'install.rdf',
+         '*.png',
+         'install.rdf.in',
+         'README.mozilla',
          'components',
-         'content'];
+         '../../LICENSE'];
+      FIREFOX_EXTENSION_FILES =
+        ['bootstrap.js',
+         'install.rdf',
+         'icon.png',
+         'icon64.png',
+         'components',
+         'content',
+         'LICENSE'];
+      FIREFOX_MC_EXTENSION_FILES =
+        ['bootstrap.js',
+         'icon.png',
+         'icon64.png',
+         'components',
+         'content',
+         'LICENSE'];
       FIREFOX_EXTENSION_NAME = 'pdf.js.xpi',
       FIREFOX_AMO_EXTENSION_NAME = 'pdf.js.amo.xpi';
 
@@ -258,10 +278,17 @@ target.firefox = function() {
 
   // We don't need pdf.js anymore since its inlined
   rm('-Rf', FIREFOX_BUILD_CONTENT_DIR + BUILD_DIR);
+  // Remove '.DS_Store' and other hidden files
+  find(FIREFOX_BUILD_DIR).forEach(function(file) {
+    if (file.match(/^\./))
+      rm('-f', file);
+  });
 
   // Update the build version number
-  sed('-i', /PDFJSSCRIPT_BUILD/, EXTENSION_BUILD_NUMBER, FIREFOX_BUILD_DIR + '/install.rdf');
-  sed('-i', /PDFJSSCRIPT_BUILD/, EXTENSION_BUILD_NUMBER, FIREFOX_BUILD_DIR + '/update.rdf');
+  sed('-i', /PDFJSSCRIPT_VERSION/, EXTENSION_VERSION, FIREFOX_BUILD_DIR + '/install.rdf');
+  sed('-i', /PDFJSSCRIPT_VERSION/, EXTENSION_VERSION, FIREFOX_BUILD_DIR + '/update.rdf');
+  sed('-i', /PDFJSSCRIPT_VERSION/, EXTENSION_VERSION, FIREFOX_BUILD_DIR + '/install.rdf.in');
+  sed('-i', /PDFJSSCRIPT_VERSION/, EXTENSION_VERSION, FIREFOX_BUILD_DIR + '/README.mozilla');
 
   // Create the xpi
   cd(FIREFOX_BUILD_DIR);
@@ -275,6 +302,15 @@ target.firefox = function() {
   exec('zip -r ' + FIREFOX_AMO_EXTENSION_NAME + ' ' + FIREFOX_EXTENSION_FILES.join(' '));
   echo('AMO extension created: ' + FIREFOX_AMO_EXTENSION_NAME);
   cd(ROOT_DIR);
+
+  // List all files for mozilla-central
+  cd(FIREFOX_BUILD_DIR);
+  var extensionFiles = '';
+  find(FIREFOX_MC_EXTENSION_FILES).forEach(function(file){
+    if (test('-f', file))
+      extensionFiles += file+'\n';
+  });
+  extensionFiles.to('extension-files');
 };
 
 //
@@ -327,9 +363,18 @@ target.test = function() {
 };
 
 //
+// make bottest
+// (Special tests for the Github bot)
+//
+target.bottest = function() {
+  target.browsertest({noreftest: true});
+  // target.unittest();
+};
+
+//
 // make browsertest
 //
-target.browsertest = function() {
+target.browsertest = function(options) {
   cd(ROOT_DIR);
   echo();
   echo('### Running browser tests');
@@ -337,14 +382,16 @@ target.browsertest = function() {
   var PDF_TEST = env['PDF_TEST'] || 'test_manifest.json',
       PDF_BROWSERS = env['PDF_BROWSERS'] || 'resources/browser_manifests/browser_manifest.json';
 
-  if (!exists('test/' + PDF_BROWSERS)) {
+  if (!test('-f', 'test/' + PDF_BROWSERS)) {
     echo('Browser manifest file test/' + PDF_BROWSERS + ' does not exist.');
     echo('Try copying one of the examples in test/resources/browser_manifests/');
     exit(1);
   }
 
+  var reftest = (options && options.noreftest) ? '' : '--reftest';
+
   cd('test');
-  exec(PYTHON_BIN + ' test.py --reftest --browserManifestFile=' + PDF_BROWSERS +
+  exec(PYTHON_BIN + ' -u test.py '+reftest+' --browserManifestFile=' + PDF_BROWSERS +
     ' --manifestFile=' + PDF_TEST, {async: true});
 };
 
@@ -356,8 +403,35 @@ target.unittest = function() {
   echo();
   echo('### Running unit tests');
 
+  if (!which('make')) {
+    echo('make not found. Skipping unit tests...');
+    return;
+  }
+
   cd('test/unit');
   exec('make', {async: true});
+};
+
+//
+// make botmakeref
+//
+target.botmakeref = function() {
+  cd(ROOT_DIR);
+  echo();
+  echo('### Creating reference images');
+
+  var PDF_TEST = env['PDF_TEST'] || 'test_manifest.json',
+      PDF_BROWSERS = env['PDF_BROWSERS'] || 'resources/browser_manifests/browser_manifest.json';
+
+  if (!test('-f', 'test/' + PDF_BROWSERS)) {
+    echo('Browser manifest file test/' + PDF_BROWSERS + ' does not exist.');
+    echo('Try copying one of the examples in test/resources/browser_manifests/');
+    exit(1);
+  }
+
+  cd('test');
+  exec(PYTHON_BIN + ' -u test.py --masterMode --noPrompts --browserManifestFile=' + PDF_BROWSERS,
+    {async: true});
 };
 
 

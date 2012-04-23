@@ -57,6 +57,7 @@ function _pwd(options) {
 };
 exports.pwd = wrap('pwd', _pwd);
 
+
 //@
 //@ #### ls([options ,] path [,path ...])
 //@ #### ls([options ,] path_array)
@@ -73,9 +74,7 @@ exports.pwd = wrap('pwd', _pwd);
 //@ ls('-R', ['/users/me', '/tmp']); // same as above
 //@ ```
 //@
-//@ Returns list of files in the given path, or in current directory if no path provided.
-//@ For convenient iteration via `for (file in ls())`, the format returned is a hash object:
-//@ `{ 'file1':null, 'dir1/file2':null, ...}`.
+//@ Returns array of files in the given path, or in current directory if no path provided.
 function _ls(options, paths) {
   options = parseOptions(options, {
     'R': 'recursive',
@@ -89,24 +88,30 @@ function _ls(options, paths) {
   else if (typeof paths === 'string')
     paths = [].slice.call(arguments, 1);
 
-  var hash = {};
+  var list = [];
 
-  function pushHash(file, query) {
+  // Conditionally pushes file to list - returns true if pushed, false otherwise
+  // (e.g. prevents hidden files to be included unless explicitly told so)
+  function pushFile(file, query) {
     // hidden file?
     if (path.basename(file)[0] === '.') {
       // not explicitly asking for hidden files?
       if (!options.all && !(path.basename(query)[0] === '.' && path.basename(query).length > 1))
-        return;
+        return false;
     }
 
-    hash[file] = null;
+    if (platform === 'win')
+      file = file.replace(/\\/g, '/');
+
+    list.push(file);
+    return true;
   }
 
   paths.forEach(function(p) {
     if (fs.existsSync(p)) {
       // Simple file?
       if (fs.statSync(p).isFile()) {
-        pushHash(p, p);
+        pushFile(p, p);
         return; // continue
       }
       
@@ -114,14 +119,17 @@ function _ls(options, paths) {
       if (fs.statSync(p).isDirectory()) {
         // Iterate over p contents
         fs.readdirSync(p).forEach(function(file) {
-          pushHash(file, p);
+          if (!pushFile(file, p))
+            return;
 
-          // Recursive
-          var oldDir = _pwd();
-          _cd('', p);
-          if (fs.statSync(file).isDirectory() && options.recursive)
-            hash = extend(hash, _ls('-R', file+'/*'));
-          _cd('', oldDir);
+          // Recursive?
+          if (options.recursive) {
+            var oldDir = _pwd();
+            _cd('', p);
+            if (fs.statSync(file).isDirectory())
+              list = list.concat(_ls('-R'+(options.all?'a':''), file+'/*'));
+            _cd('', oldDir);
+          }
         });
         return; // continue
       }
@@ -136,17 +144,20 @@ function _ls(options, paths) {
       // Escape special regular expression chars
       var regexp = basename.replace(/(\^|\$|\(|\)|\<|\>|\[|\]|\{|\}|\.|\+|\?)/g, '\\$1');
       // Translates wildcard into regex
-      regexp = '^' + regexp.replace(/\*/g, '.*');
+      regexp = '^' + regexp.replace(/\*/g, '.*') + '$';
       // Iterate over directory contents
       fs.readdirSync(dirname).forEach(function(file) {
         if (file.match(new RegExp(regexp))) {
-          pushHash(path.normalize(dirname+'/'+file), basename);
+          if (!pushFile(path.normalize(dirname+'/'+file), basename))
+            return;
 
-          // Recursive
-          var pp = dirname + '/' + file;
-          if (fs.statSync(pp).isDirectory() && options.recursive)
-            hash = extend(hash, _ls('-R', pp+'/*'));
-        }
+          // Recursive?
+          if (options.recursive) {
+            var pp = dirname + '/' + file;
+            if (fs.statSync(pp).isDirectory())
+              list = list.concat(_ls('-R'+(options.all?'a':''), pp+'/*'));
+          } // recursive
+        } // if file matches
       }); // forEach
       return;
     }
@@ -154,9 +165,58 @@ function _ls(options, paths) {
     error('no such file or directory: ' + p, true);
   });
 
-  return hash;
+  return list;
 };
 exports.ls = wrap('ls', _ls);
+
+
+//@
+//@ #### find(path [,path ...])
+//@ #### find(path_array)
+//@ Examples:
+//@
+//@ ```javascript
+//@ find('src', 'lib');
+//@ find(['src', 'lib']); // same as above
+//@ find('.').filter(function(file) { return file.match(/\.js$/); });
+//@ ```
+//@
+//@ Returns array of all files (however deep) in the given paths.
+//@
+//@ The main difference from `ls('-R', path)` is that the resulting file names 
+//@ include the base directories, e.g. `lib/resources/file1` instead of just `file1`.
+function _find(options, paths) {
+  if (!paths)
+    error('no path specified');
+  else if (typeof paths === 'object')
+    paths = paths; // assume array
+  else if (typeof paths === 'string')
+    paths = [].slice.call(arguments, 1);
+
+  var list = [];
+
+  function pushFile(file) {
+    if (platform === 'win')
+      file = file.replace(/\\/g, '/');
+    list.push(file);
+  }
+
+  // why not simply do ls('-R', paths)? because the output wouldn't give the base dirs
+  // to get the base dir in the output, we need instead ls('-R', 'dir/*') for every directory
+
+  paths.forEach(function(file) {
+    pushFile(file);
+
+    if (fs.statSync(file).isDirectory()) {
+      _ls('-Ra', file+'/*').forEach(function(subfile) {
+        pushFile(subfile);
+      });
+    }
+  });
+
+  return list;
+}
+exports.find = wrap('find', _find);
 
 
 //@
@@ -298,9 +358,20 @@ function _rm(options, files) {
 
     // Remove simple file
     if (fs.statSync(file).isFile()) {
-      fs.unlinkSync(file);
+
+      // Do not check for file writing permissions
+      if (options.force) {
+        _unlinkSync(file);
+        return;
+      }
+            
+      if (isWriteable(file))
+        _unlinkSync(file);
+      else
+        error('permission denied: '+file, true);
+
       return;
-    }
+    } // simple file
 
     // Path is an existing directory, but no -r flag given
     if (fs.statSync(file).isDirectory() && !options.recursive) {
@@ -310,7 +381,7 @@ function _rm(options, files) {
 
     // Recursively remove existing directory
     if (fs.statSync(file).isDirectory() && options.recursive) {
-      rmdirSyncRecursive(file);
+      rmdirSyncRecursive(file, options.force);
     }
   }); // forEach(file)
 }; // rm
@@ -439,6 +510,42 @@ function _mkdir(options, dirs) {
 exports.mkdir = wrap('mkdir', _mkdir);
 
 //@
+//@ #### test(expression)
+//@ Available expression primaries:
+//@
+//@ + `'-d', 'path'`: true if path is a directory
+//@ + `'-f', 'path'`: true if path is a regular file
+//@
+//@ Examples:
+//@
+//@ ```javascript
+//@ if (test('-d', path)) { /* do something with dir */ };
+//@ if (!test('-f', path)) continue; // skip if it's a regular file
+//@ ```
+//@
+//@ Evaluates expression using the available primaries and returns corresponding value.
+function _test(options, path) {
+  if (!path)
+    error('no path given');
+
+  // hack - only works with unary primaries
+  options = parseOptions(options, {
+    'd': 'directory',
+    'f': 'file'
+  });
+  if (!options.directory && !options.file)
+    error('could not interpret expression');
+
+  if (options.directory)
+    return fs.existsSync(path) && fs.statSync(path).isDirectory();
+
+  if (options.file)
+    return fs.existsSync(path) && fs.statSync(path).isFile();
+}; // test
+exports.test = wrap('test', _test);
+
+
+//@
 //@ #### cat(file [, file ...])
 //@ #### cat(file_array)
 //@
@@ -497,7 +604,11 @@ function _to(options, file) {
   if (!fs.existsSync( path.dirname(file) ))
       error('no such file or directory: ' + path.dirname(file));
 
-  fs.writeFileSync(file, this.toString(), 'utf8');
+  try {
+    fs.writeFileSync(file, this.toString(), 'utf8');
+  } catch(e) {
+    error('could not write to file (code '+e.code+'): '+file, true);
+  }
 };
 // In the future, when Proxies are default, we can add methods like `.to()` to primitive strings. 
 // For now, this is a dummy function to bookmark places we need such strings
@@ -666,7 +777,7 @@ exports.which = wrap('which', _which);
 //@ like `.to()`.
 function _echo(options) {
   var messages = [].slice.call(arguments, 1);
-  log.apply(this, messages);
+  console.log.apply(this, messages);
   return ShellString(messages.join(' '));
 };
 exports.echo = wrap('echo', _echo);
@@ -698,6 +809,10 @@ exports.env = process.env;
 //@ When in synchronous mode returns the object `{ code:..., output:... }`, containing the program's 
 //@ `output` (stdout + stderr)  and its exit `code`. Otherwise the `callback` gets the 
 //@ arguments `(code, output)`.
+//@
+//@ **Note:** For long-lived processes, it's best to run `exec()` asynchronously as
+//@ the current synchronous implementation uses a lot of CPU. This should be getting
+//@ fixed soon.
 function _exec(command, options, callback) {
   if (!command)
     error('must specify command');
@@ -708,7 +823,7 @@ function _exec(command, options, callback) {
   }
 
   options = extend({
-    silent: false,
+    silent: state.silent,
     async: false
   }, options);
 
@@ -737,11 +852,53 @@ exports.exec = wrap('exec', _exec, {notUnix:true});
 //@ Follows Python's [tempfile algorithm](http://docs.python.org/library/tempfile.html#tempfile.tempdir).
 exports.tempdir = wrap('tempdir', tempDir);
 
+
+//@
+//@ #### error()
+//@ Tests if error occurred in the last command. Returns `null` if no error occurred,
+//@ otherwise returns string explaining the error
+exports.error = function() {
+  return state.error;
+}
+
+//@
+//@ #### silent([state])
+//@ Example:
+//@
+//@ ```javascript
+//@ var silentState = silent();
+//@ silent(true);
+//@ /* ... */
+//@ silent(silentState); // restore old silent state
+//@ ```
+//@
+//@ Suppresses all command output if `state = true`, except for `echo()` calls. 
+//@ Returns state if no arguments given.
+exports.silent = function(_state) {
+  if (typeof _state !== 'boolean')
+    return state.silent;
+  
+  state.silent = _state;
+}
+
+
+//@
+//@ ## Deprecated
+//@
+
+
+
+
 //@
 //@ #### exists(path [, path ...])
 //@ #### exists(path_array)
+//@
+//@ _This function is being deprecated. Use `test()` instead._
+//@
 //@ Returns true if all the given paths exist.
 function _exists(options, paths) {
+  deprecate('exists', 'Use test() instead.');
+
   if (!paths)
     error('no paths given');
 
@@ -759,31 +916,18 @@ function _exists(options, paths) {
 };
 exports.exists = wrap('exists', _exists);
 
-//@
-//@ #### error()
-//@ Tests if error occurred in the last command. Returns `null` if no error occurred,
-//@ otherwise returns string explaining the error
-exports.error = function() {
-  return state.error;
-}
 
 //@
 //@ #### verbose()
+//@
+//@ _This function is being deprecated. Use `silent(false) instead.`_
+//@
 //@ Enables all output (default)
 exports.verbose = function() {
+  deprecate('verbose', 'Use silent(false) instead.');
+
   state.silent = false;
 }
-
-//@
-//@ #### silent()
-//@ Suppresses all output, except for explict `echo()` calls
-exports.silent = function() {
-  state.silent = true;
-}
-
-
-
-
 
 
 
@@ -802,6 +946,10 @@ exports.silent = function() {
 function log() {
   if (!state.silent)
     console.log.apply(this, arguments);
+}
+
+function deprecate(what, msg) {
+  console.log('*** ShellJS.'+what+': This function is deprecated.', msg);
 }
 
 function write(msg) {
@@ -877,7 +1025,7 @@ function wrap(cmd, fn, options) {
     } catch (e) {
       if (!state.error) {
         // If state.error hasn't been set it's an error thrown by Node, not us - probably a bug...
-        console.log('maker.js: internal error');
+        console.log('shell.js: internal error');
         console.log(e.stack || e);
         process.exit(1);
       }
@@ -885,7 +1033,7 @@ function wrap(cmd, fn, options) {
         throw e;
     }
 
-    state.currentCmd = 'maker.js';
+    state.currentCmd = 'shell.js';
     return retValue;
   }
 } // wrap
@@ -899,10 +1047,22 @@ function copyFileSync(srcFile, destFile) {
 
   var BUF_LENGTH = 64*1024,
       buf = new Buffer(BUF_LENGTH),
-      fdr = fs.openSync(srcFile, 'r'),
-      fdw = fs.openSync(destFile, 'w'),
       bytesRead = BUF_LENGTH,
-      pos = 0;
+      pos = 0,
+      fdr = null,
+      fdw = null;
+
+  try {
+    fdr = fs.openSync(srcFile, 'r');
+  } catch(e) {
+    error('copyFileSync: could not read src file ('+srcFile+')');
+  }
+
+  try {
+    fdw = fs.openSync(destFile, 'w');
+  } catch(e) {
+    error('copyFileSync: could not write to dest file (code='+e.code+'):'+destFile);
+  }
 
   while (bytesRead === BUF_LENGTH) {
     bytesRead = fs.readSync(fdr, buf, 0, BUF_LENGTH, pos);
@@ -965,28 +1125,41 @@ function cpdirSyncRecursive(sourceDir, destDir, opts) {
 //
 // Licensed under the MIT License
 // http://www.opensource.org/licenses/mit-license.php
-function rmdirSyncRecursive(dir) {
+function rmdirSyncRecursive(dir, force) {
   var files;
 
   files = fs.readdirSync(dir);
 
   // Loop through and delete everything in the sub-tree after checking it
   for(var i = 0; i < files.length; i++) {
-    var currFile = fs.lstatSync(dir + "/" + files[i]);
+    var file = dir + "/" + files[i],
+        currFile = fs.lstatSync(file);
 
-    if(currFile.isDirectory()) // Recursive function back to the beginning
-      rmdirSyncRecursive(dir + "/" + files[i]);
+    if(currFile.isDirectory()) { // Recursive function back to the beginning
+      rmdirSyncRecursive(file, force);
+    }
 
-    else if(currFile.isSymbolicLink()) // Unlink symlinks
-      fs.unlinkSync(dir + "/" + files[i]);
+    else if(currFile.isSymbolicLink()) { // Unlink symlinks
+      if (force || isWriteable(file))
+        _unlinkSync(file);
+    }
 
     else // Assume it's a file - perhaps a try/catch belongs here?
-      fs.unlinkSync(dir + "/" + files[i]);
+      if (force || isWriteable(file))
+        _unlinkSync(file);
   }
 
   // Now that we know everything in the sub-tree has been deleted, we can delete the main directory. 
   // Huzzah for the shopkeep.
-  return fs.rmdirSync(dir);
+
+  var result;
+  try {
+    result = fs.rmdirSync(dir);
+  } catch(e) {
+    error('could not remove directory (code '+e.code+'): ' + dir, true);
+  }
+
+  return result;
 }; // rmdirSyncRecursive
 
 // Recursively creates 'dir'
@@ -1033,7 +1206,7 @@ function writeableDir(dir) {
   var testFile = dir+'/'+randomFileName();
   try {
     fs.writeFileSync(testFile, ' ');
-    fs.unlinkSync(testFile);
+    _unlinkSync(testFile);
     return dir;
   } catch (e) {
     return false;
@@ -1066,6 +1239,10 @@ function tempDir() {
 // Wrapper around exec() to enable echoing output to console in real time
 function execAsync(cmd, opts, callback) {
   var output = '';
+
+  var options = extend({
+    silent: state.silent
+  }, opts);
   
   var c = child.exec(cmd, {env: process.env}, function(err) {
     if (callback) 
@@ -1074,14 +1251,14 @@ function execAsync(cmd, opts, callback) {
 
   c.stdout.on('data', function(data) {
     output += data;
-    if (!opts.silent)
-      write(data);
+    if (!options.silent)
+      process.stdout.write(data);
   });
 
   c.stderr.on('data', function(data) {
     output += data;
-    if (!opts.silent)
-      write(data);
+    if (!options.silent)
+      process.stdout.write(data);
   });
 }
 
@@ -1093,16 +1270,17 @@ function execAsync(cmd, opts, callback) {
 function execSync(cmd, opts) {
   var stdoutFile = path.resolve(tempDir()+'/'+randomFileName()),
       codeFile = path.resolve(tempDir()+'/'+randomFileName()),
-      scriptFile = path.resolve(tempDir()+'/'+randomFileName());
+      scriptFile = path.resolve(tempDir()+'/'+randomFileName()),
+      sleepFile = path.resolve(tempDir()+'/'+randomFileName());
 
   var options = extend({
-    silent: false
+    silent: state.silent
   }, opts);
 
   var previousStdoutContent = '';
   // Echoes stdout changes from running process, if not silent
   function updateStdout() {
-    if (state.silent || options.silent || !fs.existsSync(stdoutFile))
+    if (options.silent || !fs.existsSync(stdoutFile))
       return;
 
     var stdoutContent = fs.readFileSync(stdoutFile, 'utf8');
@@ -1129,9 +1307,9 @@ function execSync(cmd, opts) {
       fs.writeFileSync('"+escape(codeFile)+"', err ? err.code.toString() : '0'); \
     });";
 
-  if (fs.existsSync(scriptFile)) fs.unlinkSync(scriptFile);
-  if (fs.existsSync(stdoutFile)) fs.unlinkSync(stdoutFile);
-  if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);
+  if (fs.existsSync(scriptFile)) _unlinkSync(scriptFile);
+  if (fs.existsSync(stdoutFile)) _unlinkSync(stdoutFile);
+  if (fs.existsSync(codeFile)) _unlinkSync(codeFile);
 
   fs.writeFileSync(scriptFile, script);
   child.exec('node '+scriptFile, { 
@@ -1140,8 +1318,11 @@ function execSync(cmd, opts) {
   });
 
   // The wait loop
-  while (!fs.existsSync(codeFile)) { updateStdout(); };
-  while (!fs.existsSync(stdoutFile)) { updateStdout(); };
+  // sleepFile is used as a dummy I/O op to mitigate unnecessary CPU usage
+  // (tried many I/O sync ops, writeFileSync() seems to be only one that is effective in reducing
+  // CPU usage, though apparently not so much on Windows)
+  while (!fs.existsSync(codeFile)) { updateStdout(); fs.writeFileSync(sleepFile, 'a'); };
+  while (!fs.existsSync(stdoutFile)) { updateStdout(); fs.writeFileSync(sleepFile, 'a'); };
 
   // At this point codeFile exists, but it's not necessarily flushed yet.
   // Keep reading it until it is.
@@ -1151,10 +1332,12 @@ function execSync(cmd, opts) {
 
   var stdout = fs.readFileSync(stdoutFile, 'utf8');
 
-  fs.unlinkSync(scriptFile);
-  fs.unlinkSync(stdoutFile);
-  fs.unlinkSync(codeFile);
-
+  // No biggie if we can't erase the files now -- they're in a temp dir anyway
+  try { _unlinkSync(scriptFile); } catch(e) {};
+  try { _unlinkSync(stdoutFile); } catch(e) {};
+  try { _unlinkSync(codeFile); } catch(e) {};
+  try { _unlinkSync(sleepFile); } catch(e) {};
+  
   // True if successful, false if not
   var obj = {
     code: code,
@@ -1172,8 +1355,9 @@ function expand(list) {
   list.forEach(function(listEl) {
     // Wildcard present? 
     if (listEl.search(/\*/) > -1) {
-      for (file in _ls('', listEl))
+      _ls('', listEl).forEach(function(file) {
         expanded.push(file);
+      });
     } else {
       expanded.push(listEl);
     }
@@ -1204,4 +1388,34 @@ function extend(target) {
   });
   
   return target;
+}
+
+// Normalizes _unlinkSync() across platforms to match Unix behavior, i.e.
+// file can be unlinked even if it's read-only, see joyent/node#3006
+function _unlinkSync(file) {
+  try {
+    fs.unlinkSync(file);
+  } catch(e) {
+    // Try to override file permission
+    if (e.code === 'EPERM') {
+      fs.chmodSync(file, '0666');
+      fs.unlinkSync(file);
+    } else {
+      throw e;
+    }
+  }
+}
+
+// Hack to determine if file has write permissions for current user
+// Avoids having to check user, group, etc, but it's probably slow
+function isWriteable(file) {
+  var writePermission = true;
+  try {
+    var __fd = fs.openSync(file, 'a');
+    fs.closeSync(__fd);
+  } catch(e) {
+    writePermission = false;
+  }
+
+  return writePermission;
 }
